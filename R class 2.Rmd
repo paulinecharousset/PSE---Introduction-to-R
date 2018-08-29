@@ -1,0 +1,255 @@
+---
+title: "Class 2: Inspecting, cleaning and analysing data"
+output: 
+ html_document:
+    number_sections: true
+    theme: cosmo
+    code_folding: hide
+---
+
+<style>
+  body {background-color:lavender}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require("tidyverse")
+require("sf")
+require("DT")
+require("descr")
+
+```
+
+# Today's exercise
+
+We will learn how to use basic R functions to clean and analyse data and how to use `ggplot2` to make nice plots. Our aim is to analyse gender and spatial disparities in the French labour market for a sample of young University graduates. 
+
+# Set-up
+
+In this second class, we will be covering methods to clean and analyse data using basic R functions. 
+
+## Installing packages 
+
+For this exercise, you will need to install `ggplot2` as well as `descr`. 
+Do not forget to load the package once it's installed.
+
+```{r installggplot2, warning=FALSE, message=FALSE, error=FALSE}
+### Installing and loading packages
+install.packages("ggplot2")
+install.packages("descr")
+
+library("ggplot2")
+library("descr")
+
+```
+
+# Reading data 
+
+All the data for today's exercise can be downloaded from [here](https://drive.google.com/open?id=115sQqs8LVqQmsKYRORTIAu3KZvUHczh0). Although I provide sources, you do not need to download the data from a given source. 
+
+For this exercise, we use a survey from the French Ministry of education on young graduates labour market insertion that can be downloaded from the [Data.gouv website](https://www.data.gouv.fr/fr/datasets/insertion-professionnelle-des-diplomes-de-master-en-universites-et-etablissements-assimil-0/). 
+
+Let's load the data:
+
+```{r readingx2, warning=FALSE,message=FALSE,error=FALSE}
+df <- read_delim(file = "Data/fr-esr-insertion_professionnelle-master.csv", delim = ";", col_names = TRUE, skip = 0, locale = locale(encoding = "UTF-8"))
+```
+
+# Inspecting the data 
+
+The first thing to do when facing a new dataset is to check what it looks like. Start by clicking on the dataframe name in the Data window, or run the following code:
+
+```{r viewdata, warning=FALSE,message=FALSE,error=FALSE}
+View(df)
+```
+
+One easy way of getting detailed information about all the variables in your dataset is to use the `summary` function:
+
+```{r summary, warning=FALSE,message=FALSE,error=FALSE}
+summary(df)
+```
+
+Our dataset contains both numeric and character variables, and we now have basic informations on the distribution of numeric variables. 
+
+Always check the number of rows in your dataset before making any changes : if you drop some observations at some point in your analysis, you need to be able to know when and why you did it.
+
+# Cleaning the data 
+
+The `summary` function also provide some information on missing data. Missing data can be coded in two ways in R: NA (not available) when the information is missing ; NaN (not a number) when the value results from an impossible operation. Other ways of coding missing values (such as ".") will not be interpreted as missing data by R, and will hence lead to an inaccurate treatment of the information. 
+
+Visual inspection of our data reveals that some missing data are indeed incorrectly coded. Have a look at the *taux_dinsertion* (employment rate) variable : in order to display all the possible values of the variable, you can use the `unique()` function, for instance, type: `unique(df$taux_dinsertion)`.
+
+This variable should be numeric, but R interpreted the variable as character due to the way missing values were coded (some are coded *ns*, other *nd*).
+
+In order to clean the data, you need to determine which values might correspond to incorrectly coded missing values. In some cases, you can refer to the codebook that was delivered with the data ; otherwise you will have to identify missing values by looking for incoherent values. 
+ 
+The usual suspects are: 
+- 0
+- .
+- na
+- 96, 97, 98, 99
+- any string in a variable that should be numeric (independently of its actual type in R)
+
+Let's have a look at all values taken by the variables incorrectly considered as character by R:
+
+```{r cleaning, warning=FALSE,message=FALSE,error=FALSE}
+
+unique_values <- df %>% 
+  select_if(is.character) %>% 
+  select(poids_de_la_discipline : salaire_net_mensuel_regional_3eme_quartile)
+
+# display all values taken by the character variables in the dataset
+unique_values <- sort(unique(unlist(unique_values))) 
+```
+
+The wrong values appear to be ".", "fe", "nd", "ns". Let's recode them as missing, and convert the corresponding variables to numeric.
+
+```{r cleaning2, warning=FALSE,message=FALSE,error=FALSE}
+
+# determine which of these values correspond to missing values
+wrong_values <- c(".", "fe", "nd", "ns") 
+
+# Now that missing values are properly coded, convert to variables to numeric
+clean <- df %>% 
+      mutate_if(is.character, funs(ifelse(. %in% wrong_values, NA, .))) %>%
+      mutate_at(vars(nombre_de_reponses : salaire_net_mensuel_regional_3eme_quartile), funs(as.numeric(.)))
+```
+
+Let's have a look at our brand new dataset !
+
+```{r cleaning3, warning=FALSE,message=FALSE,error=FALSE}
+
+# Determine which of these values correspond to missing values
+summary(clean)
+```
+
+This is already a much more tractable dataset. Let's now assess the quality of our dataset.
+
+```{r missingvalues, warning=FALSE,message=FALSE,error=FALSE}
+
+missing <- clean %>% select_if(is.numeric) %>% summarise_all(funs(mean(!is.na(.))))
+```
+
+Unfortunately, our dataset has a lot of missing values. We need to keep this in mind: it will impact a lot the way we can interpret our results.
+
+# Analysing the data 
+
+Let's start by analysing our variable of interest, taux_dinsertion, with basic R functions.
+
+```{r analysis, warning=FALSE,message=FALSE,error=FALSE}
+
+analysis <- clean %>% select(taux_dinsertion) %>% summarise(mean_empl = mean(taux_dinsertion, na.rm=T),
+                                                            med_empl = median(taux_dinsertion, na.rm=T),
+                                                            min_empl = min(taux_dinsertion, na.rm=T),
+                                                            max_empl = max(taux_dinsertion, na.rm=T),
+                                                            sd_empl = sd(taux_dinsertion, na.rm=T),
+                                                            n_missing_empl = sum(is.na(taux_dinsertion)),
+                                                            n_empl = n())
+```
+
+## Plotting the data
+
+We are now ready to use ggplot ! 
+With ggplot, you need to specify what the setting of your plot, which is made of 3 parts: 
+
+- the **database** you are using
+- the **aesthetics** (aes) you want for your graph: the x and y variables, the color, line types 
+- the **geometry** : the type of graph you want (histogram, scatter plot, etc...)
+
+Let's plot the distribution of employment rates 30 months after graduation.
+
+```{r analysisplot, warning=FALSE,message=FALSE,error=FALSE}
+
+empl_rate <- clean %>% subset(situation == "30 mois après le diplôme")
+
+plot1 <- ggplot(empl_rate, aes(x=taux_dinsertion)) + 
+  geom_density()
+plot1
+
+# Add a vertical line for the mean
+plot1 <- plot1 + geom_vline(aes(xintercept=mean(taux_dinsertion)),
+            color="blue", linetype="dashed")
+
+plot1
+
+# Make the graph look nicer
+
+plot1 <- plot1 +
+  theme(axis.line = element_line( colour = "black"),
+        panel.border = element_blank(),
+        panel.background = element_blank(),
+        legend.position = "bottom")
+
+plot1
+
+```
+
+Now, we have been plotting the distribution of employment rates of graduates in years 2010 to 2014 altogether. We might want to see whether this employment rate has evolved over time, i.e. plot this distribution separately for each year.
+
+In order to do this, we first need to convert the variable *annee* (year) to a factor variable. For readability reasons, we keep only the years 2010, 2012, 2014.
+
+```{r analysisplot2, warning=FALSE,message=FALSE,error=FALSE}
+
+evol_empl_rate <- empl_rate %>% 
+                  subset(annee %in% c("2010","2012","2014")) %>% 
+                  mutate_at(vars(annee), funs(factor(.)))
+
+plot2 <- ggplot(evol_empl_rate, aes(x=taux_dinsertion, color = annee)) + 
+  geom_density() + 
+  theme(axis.line = element_line( colour = "black"),
+        panel.border = element_blank(),
+        panel.background = element_blank(),
+        legend.position = "bottom")
+
+plot2
+
+```
+
+
+## Analysing the relationships between variables
+
+### Two categorical variables
+
+Let's have a look at the distribution of domains by region (*academie*). You will need to install and load the
+
+```{r crosstabulation, warning=FALSE,message=FALSE,error=FALSE}
+region <- clean %>% subset(academie %in% c("Paris", "Strasbourg", "Limoges", "Aix-Marseille"))
+crosstab(region$academie,region$domaine, prop.r =T, plot = F, cell.layout = F, dnn = c("Region","Domain"))
+
+```
+
+
+### One continuous and one categorical variables
+
+Let's have a look at the employment rates of young graduates who answered the survey in the selected regions. 
+
+```{r discrcontvar, warning=FALSE,message=FALSE,error=FALSE}
+
+empl_rates_regions <- region %>% 
+  group_by(academie) %>%
+  select(taux_dinsertion) %>%
+  summarise_all(funs(mean(., na.rm = T)))
+
+```
+
+### Two continuous variables
+
+The relationship between two continuous variables can be assessed by looking at their corelation coefficient or running a regression. Let's have a look at how the employment rate relates to the response rate (*taux_de_reponse*)
+
+```{r twocontvar, warning=FALSE,message=FALSE,error=FALSE}
+
+corr_coef <- cor(region$taux_dinsertion, region$taux_de_reponse, use="complete.obs", method="pearson")
+fit <- coef(summary(lm(region$taux_dinsertion ~ region$taux_de_reponse)))
+
+```
+
+### Statistical tests
+
+```{r stattests, warning=FALSE,message=FALSE,error=FALSE}
+
+t.test(region$taux_dinsertion, region$taux_de_reponse)
+
+```
+# Exercises
+
+Upload your script [here](https://script.google.com/macros/s/AKfycbzsOfnH_T3lSWFzmsp8VUO0oCa7DLdhiSxB8oWi8zYQpmMl0YBn/exec)
